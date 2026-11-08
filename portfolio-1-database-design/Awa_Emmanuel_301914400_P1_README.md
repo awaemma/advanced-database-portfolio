@@ -56,4 +56,4 @@ Open an account, deposit, withdraw, transfer between accounts, reverse a transfe
 
 ### Scope
 
-One institution, one currency (NGN), transfers between accounts held at the bank, and generated data. Loans, cards, interest, foreign exchange, interbank transfers, real identity checks and user login are left out.
+One institution, one currency (NGN), transfers between accounts held at the bank, and generated data. Loans, cards, interest, foreign exchange, interbank transfers, real identity checks and user login are left out intentionally.
