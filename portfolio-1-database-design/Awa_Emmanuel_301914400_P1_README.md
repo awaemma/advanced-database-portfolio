@@ -180,3 +180,44 @@ The dependencies in this data are:
 I checked whether lga determines state in the customer address, which would be a transitive dependency. It does not, because some LGA names exist in more than one state, for example Surulere in Lagos and in Oyo. The address columns stay in customer.
 
 The final schema above is the result. The generated ids replace the business columns as primary keys, and account_number, channel_code and institution_code stay as unique columns. Balance is not stored, so it cannot disagree with the ledger.
+
+
+## Physical design
+
+The schema is in [Awa_Emmanuel_301914400_P1_Schema.sql](Awa_Emmanuel_301914400_P1_Schema.sql). I chose PostgreSQL because the case study depends on transactions, foreign keys, check constraints, partitioning and role-based access, and it provides all of them.
+
+### Data types
+
+| Data | Type | Reason |
+| --- | --- | --- |
+| ids | bigint, generated always as identity | The database assigns them, and the ledger can grow past the integer range. |
+| amounts | numeric(18,2) | Exact Naira and kobo values. A floating-point type would round. |
+| times | timestamptz | Transfers and entries need an unambiguous moment. |
+| session_id | char(30) with a digits-only check | Fixed length, as in rule 8. |
+| account and bank account numbers, bvn | char(10), char(11) with digits-only checks | Nigerian account numbers have 10 digits and a BVN has 11. |
+| status, type and direction values | varchar with a check constraint | A check list is simpler to change than an enum type. |
+| ip_address | inet | Validates the address. |
+
+### Storage
+
+ledger_entry is the table that grows fastest, so it is partitioned by month on posted_at. Its primary key is entry_id with posted_at, because a partition key has to be part of the primary key. There are partitions for October, November and December 2026, and a default partition for any other date. An old month can be detached and archived without touching the rest.
+
+### Indexes
+
+PostgreSQL creates an index for every primary key and unique constraint: the ten primary keys, plus phone, account_number, channel_code, institution_code, and session_id on each transfer table. No other indexes exist yet.
+
+### Views
+
+account_balance returns each account with its balance, summed from the ledger as credits minus debits. A reversal posts the opposite direction, so it cancels the original entry.
+
+### Security
+
+The three roles cannot log in. Each user or service account is later granted one of them.
+
+| Role | Access |
+| --- | --- |
+| veracore_app | Read and insert on customers, accounts, transfers, the registry, audit events and the ledger. Read on channels, banks and balances. Update only account status and closing date, and the status and reversal columns of the transfer tables. |
+| veracore_ops | Read on all tables. Update account status and closing date, and the status and reversal columns of the transfer tables. |
+| veracore_auditor | Read on all tables. |
+
+No role is granted update or delete on ledger_entry, which is how rule 7 is applied.
