@@ -1,0 +1,24 @@
+# Veracore MFB: three-node MongoDB replica set (replica set name rs0)
+services:
+  veracore-rs1:
+    image: mongo:7
+    container_name: veracore-rs1
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports: ["27018:27017"]
+    volumes: ["rs1data:/data/db"]
+  veracore-rs2:
+    image: mongo:7
+    container_name: veracore-rs2
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports: ["27019:27017"]
+    volumes: ["rs2data:/data/db"]
+  veracore-rs3:
+    image: mongo:7
+    container_name: veracore-rs3
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports: ["27020:27017"]
+    volumes: ["rs3data:/data/db"]
+volumes:
+  rs1data:
+  rs2data:
+  rs3data:
