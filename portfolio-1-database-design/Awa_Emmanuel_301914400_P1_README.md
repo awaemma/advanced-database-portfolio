@@ -222,3 +222,121 @@ The three roles cannot log in. Each user or service account is later granted one
 | veracore_auditor | Read on all tables. |
 
 No role is granted update or delete on ledger_entry, which is how rule 7 is applied.
+
+
+## Implementation
+
+I loaded the schema into a PostgreSQL database called veracore and filled it with generated data using [Awa_Emmanuel_301914400_P1_SeedData.py](Awa_Emmanuel_301914400_P1_SeedData.py). The script uses a fixed random seed (8103), so a rerun produces the same data. The load took 35.9 seconds.
+
+### Schema in the database
+
+The tables, partitions and view created by the schema file:
+
+[![Tables and view in the veracore database](screenshots/Awa_Emmanuel_301914400_P1_SchemaTables.png)](screenshots/Awa_Emmanuel_301914400_P1_SchemaTables.png)
+
+The four partitions of ledger_entry:
+
+[![Partitions of ledger_entry](screenshots/Awa_Emmanuel_301914400_P1_LedgerPartitions.png)](screenshots/Awa_Emmanuel_301914400_P1_LedgerPartitions.png)
+
+The three roles:
+
+[![Roles in the veracore database](screenshots/Awa_Emmanuel_301914400_P1_Roles.png)](screenshots/Awa_Emmanuel_301914400_P1_Roles.png)
+
+### Seed data
+
+The seed script's own summary of the load:
+
+[![Seed script output](screenshots/Awa_Emmanuel_301914400_P1_SeedRun.png)](screenshots/Awa_Emmanuel_301914400_P1_SeedRun.png)
+
+The data is fictional. Names, phone numbers, BVNs and account numbers are generated, and the banks are real Nigerian banks. Transfers run in time order from 1 October to 10 November 2026. Every active account first receives an inward transfer, and a debit is reduced when the balance would not cover it. The script reduced 7,650 debits this way. It held back 33 transfers until an eligible account existed and dropped none. Frozen and closed accounts have no transfers.
+
+| Table | Rows |
+| --- | --- |
+| channel | 3 |
+| external_institution | 12 |
+| customer | 500 |
+| account | 874 (798 active, 57 frozen, 19 closed) |
+| session_registry | 100,000 |
+| intrabank_transfer | 60,000 |
+| inward_transfer | 20,000 |
+| outward_transfer | 20,000 |
+| ledger_entry | 155,090 |
+| audit_event | 2,000 |
+
+The ledger rows sit in the October partition (117,341) and the November partition (37,749). The December and default partitions are empty.
+
+[![Row counts per table and partition](screenshots/Awa_Emmanuel_301914400_P1_SeedRowCounts.png)](screenshots/Awa_Emmanuel_301914400_P1_SeedRowCounts.png)
+
+| Transfer type | Success | Failed | Pending | Reversed |
+| --- | --- | --- | --- | --- |
+| intrabank | 55,212 | 3,039 | 296 | 1,453 |
+| inward | 18,508 | 925 | 104 | 463 |
+| outward | 18,402 | 999 | 90 | 509 |
+
+[![Transfers by type and status](screenshots/Awa_Emmanuel_301914400_P1_SeedTransferStatus.png)](screenshots/Awa_Emmanuel_301914400_P1_SeedTransferStatus.png)
+
+### Checks after loading
+
+Each check counts rows that break a rule, so 0 is the expected result. All four returned 0.
+
+| Check | Result |
+| --- | --- |
+| Accounts with a negative balance | 0 |
+| Successful intrabank transfers without one matching debit and one matching credit | 0 |
+| Ledger entries not linked to exactly one transfer | 0 |
+| Transfers with a missing or mismatched registry row | 0 |
+
+[![Results of the four checks](screenshots/Awa_Emmanuel_301914400_P1_SeedChecks.png)](screenshots/Awa_Emmanuel_301914400_P1_SeedChecks.png)
+
+
+## Testing and evaluation
+
+### Constraint tests
+
+I ran each test as a single statement inside a block that is always rolled back, so no test changed the data. The first 18 tests are statements that break a rule and should be rejected. The last is a valid transfer and should be accepted. All 19 gave the expected result.
+
+| Test | Result |
+| --- | --- |
+| customer: duplicate phone | rejected, customer_phone_key |
+| customer: gender other than male or female | rejected, customer_gender_check |
+| account: duplicate account_number | rejected, account_account_number_key |
+| account: invalid account_type | rejected, account_account_type_check |
+| account: closed without closed_on | rejected, account_check |
+| session_registry: duplicate session_id | rejected, session_registry_pkey |
+| session_registry: session_id with 29 digits | rejected, session_registry_session_id_check |
+| intrabank_transfer: session_id not in the registry | rejected, intrabank_transfer_session_id_fkey |
+| intrabank_transfer: amount of zero | rejected, intrabank_transfer_amount_check |
+| intrabank_transfer: same sender and destination | rejected, intrabank_transfer_check |
+| intrabank_transfer: sender account does not exist | rejected, intrabank_transfer_sender_account_fkey |
+| intrabank_transfer: success with the wrong response_message | rejected, intrabank_transfer_check1 |
+| intrabank_transfer: reversed without reversed_at | rejected, intrabank_transfer_check2 |
+| ledger_entry: linked to no transfer | rejected, ledger_entry_check |
+| ledger_entry: linked to two transfers | rejected, ledger_entry_check |
+| ledger_entry: direction other than debit or credit | rejected, ledger_entry_direction_check |
+| ledger_entry: negative amount | rejected, ledger_entry_amount_check |
+| ledger_entry: account number does not exist | rejected, ledger_entry_account_number_fkey |
+| valid intrabank transfer | accepted |
+
+[![Results of the constraint tests](screenshots/Awa_Emmanuel_301914400_P1_ConstraintTests.png)](screenshots/Awa_Emmanuel_301914400_P1_ConstraintTests.png)
+
+### Access tests
+
+I ran each statement as the role named in the test, again inside a rolled-back block. All seven gave the expected result.
+
+| Test | Result |
+| --- | --- |
+| veracore_app updates ledger_entry | rejected, permission denied |
+| veracore_app deletes from ledger_entry | rejected, permission denied |
+| veracore_ops updates ledger_entry | rejected, permission denied |
+| veracore_auditor inserts into customer | rejected, permission denied |
+| veracore_app changes an account number | rejected, permission denied |
+| veracore_app freezes an account | accepted |
+| veracore_auditor reads account_balance | accepted |
+
+[![Results of the access tests](screenshots/Awa_Emmanuel_301914400_P1_AccessTests.png)](screenshots/Awa_Emmanuel_301914400_P1_AccessTests.png)
+
+### Evaluation
+
+The constraints reject bad values, broken references, duplicate keys and malformed transfers, and the roles keep the ledger from being changed by the application, operations or auditor roles. The checks after loading showed that the seeded data keeps balances at or above zero and pairs every successful intrabank transfer with one debit and one credit.
+
+Some rules are not enforced by the schema, because they depend on other rows or tables. The database does not stop a transfer involving an account that is frozen or closed, a debit that takes a balance below zero, a successful transfer with missing ledger entries, or a registry transfer_type that differs from the table holding the transfer. It also does not stop an account from being closed with a balance. The owner of the tables can still update the ledger, since the restriction applies to the three roles. These rules are checked in the data after loading and are not tested as rejections.
