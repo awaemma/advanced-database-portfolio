@@ -82,13 +82,13 @@ The model has ten entities, drawn in two figures. In the diagrams an underlined 
 | AuditEvent | event_id (key), event_type, severity, occurred_at, ip_address, details |
 | Channel | channel_id (key), channel_code (unique), channel_name |
 | ExternalInstitution | institution_id (key), institution_code (unique), institution_name |
-| IntrabankTransfer | intrabank_transfer_id (key), session_id, amount, narration, status, created_at, posted_at, response_message, reversal (reversed_at, reversal_reason) |
-| InwardTransfer | inward_transfer_id (key), session_id, amount, narration, status, created_at, posted_at, response_message, sender (name, account_number, institution_code), reversal (reversed_at, reversal_reason) |
-| OutwardTransfer | outward_transfer_id (key), session_id, amount, narration, status, created_at, posted_at, response_message, beneficiary (name, account_number, institution_code), reversal (reversed_at, reversal_reason) |
+| IntrabankTransfer | intrabank_transfer_id (key), session_id, sender_account, destination_account, amount, narration, status, created_at, posted_at, response_message, reversal (reversed_at, reversal_reason) |
+| InwardTransfer | inward_transfer_id (key), session_id, sender_account, sender_name, destination_account, amount, narration, status, created_at, posted_at, response_message, reversal (reversed_at, reversal_reason) |
+| OutwardTransfer | outward_transfer_id (key), session_id, sender_account, destination_account, beneficiary_name, amount, narration, status, created_at, posted_at, response_message, reversal (reversed_at, reversal_reason) |
 | SessionRegistry | session_id (key), transfer_type |
-| LedgerEntry | entry_id (key), direction, amount, posted_at, entry_kind |
+| LedgerEntry | entry_id (key), account_number, direction, amount, posted_at, entry_kind |
 
-Gender is male or female, account_type is wallet or savings, account status is active, frozen or closed, transfer status is pending, success, failed or reversed, direction is debit or credit, and entry_kind is original or reversal. A session_id is a 30-digit number, and transfer_type in SessionRegistry is intrabank, inward or outward. Every entity has an id as its key. Account, Channel and ExternalInstitution also keep their business identifiers (account_number, channel_code and institution_code) as unique attributes. Balance is the sum of an account's ledger entries.
+Gender is male or female, account_type is wallet or savings, account status is active, frozen or closed, transfer status is pending, success, failed or reversed, direction is debit or credit, and entry_kind is original or reversal. In a transfer, sender_account and destination_account hold account numbers. An account at Veracore must exist in Account, and an account at another bank is only stored as a number. A ledger entry holds the account number it affects. A session_id is a 30-digit number, and transfer_type in SessionRegistry is intrabank, inward or outward. Every entity has an id as its key. Account, Channel and ExternalInstitution also keep their business identifiers (account_number, channel_code and institution_code) as unique attributes. Balance is the sum of an account's ledger entries.
 
 ### Relationships
 
@@ -113,7 +113,7 @@ Every ledger entry belongs to exactly one transfer, which is an intrabank, inwar
 
 ### Relational schema
 
-Each entity became a table with its id as the primary key. Composite attributes became separate columns: address into street, city, lga and state, reversal into reversed_at and reversal_reason, and sender and beneficiary into a name and an account number. Balance is derived, so it is not a column. Each one-to-many relationship became a foreign key on the many side. The sender and beneficiary institution_code from the ER diagram is not repeated in the transfer tables, because institution_id already identifies the bank. A ledger entry holds three optional foreign keys, one per transfer table, and exactly one of them is filled.
+Each entity became a table with its id as the primary key. Composite attributes became separate columns: address into street, city, lga and state, reversal into reversed_at and reversal_reason. Balance is derived, so it is not a column. Each one-to-many relationship became a foreign key on the many side. A transfer stores its sender and destination as account numbers, and a ledger entry stores the account number it affects. A Veracore account number is a foreign key to account_number, which is unique. An account number at another bank is a plain column, and institution_id identifies the bank. A ledger entry holds three optional foreign keys, one per transfer table, and exactly one of them is filled.
 
 [![Relational schema of the Veracore MFB database](screenshots/Awa_Emmanuel_301914400_P1_RelationalSchemaDiagram.png)](screenshots/Awa_Emmanuel_301914400_P1_RelationalSchemaDiagram.png)
 
@@ -125,10 +125,10 @@ Each entity became a table with its id as the primary key. Composite attributes 
 | channel | channel_id | none | channel_code |
 | external_institution | institution_id | none | institution_code |
 | session_registry | session_id | none | none |
-| intrabank_transfer | intrabank_transfer_id | session_id references session_registry; source_account_id and destination_account_id reference account; channel_id references channel | session_id |
-| outward_transfer | outward_transfer_id | session_id references session_registry; debited_account_id references account; channel_id references channel; institution_id references external_institution | session_id |
-| inward_transfer | inward_transfer_id | session_id references session_registry; credited_account_id references account; institution_id references external_institution | session_id |
-| ledger_entry | entry_id | account_id references account; intrabank_transfer_id, outward_transfer_id and inward_transfer_id reference their transfer tables (each optional) | none |
+| intrabank_transfer | intrabank_transfer_id | session_id references session_registry; sender_account and destination_account reference account (account_number); channel_id references channel | session_id |
+| outward_transfer | outward_transfer_id | session_id references session_registry; sender_account references account (account_number); channel_id references channel; institution_id references external_institution | session_id |
+| inward_transfer | inward_transfer_id | session_id references session_registry; destination_account references account (account_number); institution_id references external_institution | session_id |
+| ledger_entry | entry_id | account_number references account (account_number); intrabank_transfer_id, outward_transfer_id and inward_transfer_id reference their transfer tables (each optional) | none |
 
 ### Constraints
 
@@ -140,7 +140,8 @@ Every foreign key is required except the ones marked optional. No foreign key ca
 | account | account_type is wallet or savings; status is active, frozen or closed; closed_on is filled only when status is closed, and always when it is | 2, 10 |
 | session_registry | session_id is exactly 30 digits; transfer_type is intrabank, inward or outward | 8 |
 | the three transfer tables | amount is greater than zero; status is pending, success, failed or reversed; response_message is "Transaction is successful" when status is success; reversed_at and reversal_reason are filled when status is reversed and empty otherwise | 3, 9, 11 |
-| intrabank_transfer | source_account_id and destination_account_id differ | 4 |
+| intrabank_transfer | sender_account and destination_account differ | 4 |
+| outward_transfer, inward_transfer | the account number at the other bank (destination_account, sender_account) is exactly 10 digits | 2 |
 | ledger_entry | direction is debit or credit; entry_kind is original or reversal; amount is greater than zero; exactly one of the three transfer ids is filled | 3, 6 |
 
 Some rules involve other rows or other tables, so a column or row check cannot hold them: the active-account condition in rule 4, rule 5, the pairing of debit and credit entries in rule 6, rule 7, the match between transfer_type in the registry and the table that holds the transfer, and the zero-balance condition for closing an account in rule 10.

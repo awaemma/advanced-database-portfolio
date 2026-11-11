@@ -59,8 +59,8 @@ CREATE TABLE session_registry (
 CREATE TABLE intrabank_transfer (
     intrabank_transfer_id   bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     session_id              char(30)      NOT NULL UNIQUE REFERENCES session_registry (session_id),
-    source_account_id       bigint        NOT NULL REFERENCES account (account_id),
-    destination_account_id  bigint        NOT NULL REFERENCES account (account_id),
+    sender_account          char(10)      NOT NULL REFERENCES account (account_number),
+    destination_account     char(10)      NOT NULL REFERENCES account (account_number),
     channel_id              bigint        NOT NULL REFERENCES channel (channel_id),
     amount                  numeric(18,2) NOT NULL CHECK (amount > 0),
     narration               varchar(140),
@@ -70,7 +70,7 @@ CREATE TABLE intrabank_transfer (
     response_message        varchar(200),
     reversed_at             timestamptz,
     reversal_reason         varchar(200),
-    CHECK (source_account_id <> destination_account_id),
+    CHECK (sender_account <> destination_account),
     CHECK (status <> 'success' OR response_message = 'Transaction is successful'),
     CHECK ((status = 'reversed' AND reversed_at IS NOT NULL AND reversal_reason IS NOT NULL)
         OR (status <> 'reversed' AND reversed_at IS NULL AND reversal_reason IS NULL))
@@ -79,11 +79,11 @@ CREATE TABLE intrabank_transfer (
 CREATE TABLE outward_transfer (
     outward_transfer_id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     session_id                   char(30)      NOT NULL UNIQUE REFERENCES session_registry (session_id),
-    debited_account_id           bigint        NOT NULL REFERENCES account (account_id),
+    sender_account               char(10)      NOT NULL REFERENCES account (account_number),
+    destination_account          char(10)      NOT NULL CHECK (destination_account ~ '^[0-9]{10}$'),
+    beneficiary_name             varchar(120)  NOT NULL,
     channel_id                   bigint        NOT NULL REFERENCES channel (channel_id),
     institution_id               bigint        NOT NULL REFERENCES external_institution (institution_id),
-    beneficiary_name             varchar(120)  NOT NULL,
-    beneficiary_account_number   char(10)      NOT NULL CHECK (beneficiary_account_number ~ '^[0-9]{10}$'),
     amount                       numeric(18,2) NOT NULL CHECK (amount > 0),
     narration                    varchar(140),
     status                       varchar(10)   NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'success', 'failed', 'reversed')),
@@ -100,10 +100,10 @@ CREATE TABLE outward_transfer (
 CREATE TABLE inward_transfer (
     inward_transfer_id      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     session_id              char(30)      NOT NULL UNIQUE REFERENCES session_registry (session_id),
-    credited_account_id     bigint        NOT NULL REFERENCES account (account_id),
-    institution_id          bigint        NOT NULL REFERENCES external_institution (institution_id),
+    sender_account          char(10)      NOT NULL CHECK (sender_account ~ '^[0-9]{10}$'),
     sender_name             varchar(120)  NOT NULL,
-    sender_account_number   char(10)      NOT NULL CHECK (sender_account_number ~ '^[0-9]{10}$'),
+    destination_account     char(10)      NOT NULL REFERENCES account (account_number),
+    institution_id          bigint        NOT NULL REFERENCES external_institution (institution_id),
     amount                  numeric(18,2) NOT NULL CHECK (amount > 0),
     narration               varchar(140),
     status                  varchar(10)   NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'success', 'failed', 'reversed')),
@@ -119,7 +119,7 @@ CREATE TABLE inward_transfer (
 
 CREATE TABLE ledger_entry (
     entry_id               bigint GENERATED ALWAYS AS IDENTITY,
-    account_id             bigint        NOT NULL REFERENCES account (account_id),
+    account_number         char(10)      NOT NULL REFERENCES account (account_number),
     intrabank_transfer_id  bigint        REFERENCES intrabank_transfer (intrabank_transfer_id),
     outward_transfer_id    bigint        REFERENCES outward_transfer (outward_transfer_id),
     inward_transfer_id     bigint        REFERENCES inward_transfer (inward_transfer_id),
@@ -140,12 +140,11 @@ CREATE TABLE ledger_entry_other   PARTITION OF ledger_entry DEFAULT;
 
 -- Balance is derived from the ledger. A reversal posts the opposite direction, so it nets out.
 CREATE VIEW account_balance AS
-SELECT a.account_id,
-       a.account_number,
+SELECT a.account_number,
        COALESCE(SUM(CASE l.direction WHEN 'credit' THEN l.amount ELSE -l.amount END), 0) AS balance
 FROM account a
-LEFT JOIN ledger_entry l ON l.account_id = a.account_id
-GROUP BY a.account_id, a.account_number;
+LEFT JOIN ledger_entry l ON l.account_number = a.account_number
+GROUP BY a.account_number;
 
 -- Roles
 CREATE ROLE veracore_app     NOLOGIN;
